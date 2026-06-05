@@ -13,7 +13,7 @@ async function getYouTube() {
     if (!youtube) {
         youtube = await Innertube.create({
             cache: new UniversalCache(false),
-            generate_session_locally: true,   // Faster startup
+            generate_session_locally: true,
         });
     }
     return youtube;
@@ -49,6 +49,15 @@ function formatNumber(n) {
     return String(num);
 }
 
+// Safe title extractor
+function getSafeTitle(videoDetails) {
+    if (!videoDetails?.title) return "Untitled Video";
+    if (typeof videoDetails.title === 'string') return videoDetails.title;
+    if (videoDetails.title?.text) return videoDetails.title.text;
+    if (videoDetails.title?.runs?.[0]?.text) return videoDetails.title.runs[0].text;
+    return "Untitled Video";
+}
+
 // --------------------- Routes ---------------------
 
 app.get("/", (req, res) => {
@@ -56,7 +65,7 @@ app.get("/", (req, res) => {
         success: true,
         name: "YouTube API",
         version: "2.0.0",
-        message: "Powered by youtubei.js (v17+)"
+        message: "Powered by youtubei.js"
     });
 });
 
@@ -97,7 +106,7 @@ app.get("/api/info", async (req, res) => {
             success: true,
             data: {
                 videoId: details.id,
-                title: details.title.text || details.title,
+                title: getSafeTitle(details),
                 description: primary?.description?.text || "",
                 author: details.author?.name,
                 channelId: details.channel_id,
@@ -123,7 +132,7 @@ app.get("/api/info", async (req, res) => {
     }
 });
 
-// Available Formats
+// Formats
 app.get("/api/formats", async (req, res) => {
     const { url } = req.query;
     if (!url) return res.status(400).json({ success: false, message: "url parameter is required" });
@@ -140,18 +149,20 @@ app.get("/api/formats", async (req, res) => {
             ...(info.streaming_data?.adaptive_formats || [])
         ];
 
-        const videoFormats = allFormats
-            .filter(f => f.has_video)
-            .map(f => ({ ...f, filesize: f.content_length ? `${(Number(f.content_length)/1048576).toFixed(2)} MB` : "unknown" }));
+        const videoFormats = allFormats.filter(f => f.has_video).map(f => ({
+            ...f,
+            filesize: f.content_length ? `${(Number(f.content_length)/1048576).toFixed(2)} MB` : "unknown"
+        }));
 
-        const audioFormats = allFormats
-            .filter(f => f.has_audio && !f.has_video)
-            .map(f => ({ ...f, filesize: f.content_length ? `${(Number(f.content_length)/1048576).toFixed(2)} MB` : "unknown" }));
+        const audioFormats = allFormats.filter(f => f.has_audio && !f.has_video).map(f => ({
+            ...f,
+            filesize: f.content_length ? `${(Number(f.content_length)/1048576).toFixed(2)} MB` : "unknown"
+        }));
 
         res.json({
             success: true,
             videoId,
-            title: info.video_details.title.text || info.video_details.title,
+            title: getSafeTitle(info.video_details),
             videoFormats,
             audioFormats
         });
@@ -170,8 +181,10 @@ app.get("/api/download/video", async (req, res) => {
         const yt = await getYouTube();
         const info = await yt.getInfo(videoId);
 
-        const title = String(info.video_details.title.text || info.video_details.title)
-            .replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_");
+        const title = getSafeTitle(info.video_details)
+            .replace(/[^\w\s-]/g, "")
+            .trim()
+            .replace(/\s+/g, "_") || "video";
 
         res.setHeader("Content-Disposition", `attachment; filename="${title}.mp4"`);
         res.setHeader("Content-Type", "video/mp4");
@@ -183,7 +196,10 @@ app.get("/api/download/video", async (req, res) => {
 
         stream.pipe(res);
     } catch (err) {
-        if (!res.headersSent) res.status(500).json({ success: false, message: err.message });
+        console.error("Download Video Error:", err);
+        if (!res.headersSent) {
+            res.status(500).json({ success: false, message: err.message || "Download failed" });
+        }
     }
 });
 
@@ -197,8 +213,10 @@ app.get("/api/download/audio", async (req, res) => {
         const yt = await getYouTube();
         const info = await yt.getInfo(videoId);
 
-        const title = String(info.video_details.title.text || info.video_details.title)
-            .replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_");
+        const title = getSafeTitle(info.video_details)
+            .replace(/[^\w\s-]/g, "")
+            .trim()
+            .replace(/\s+/g, "_") || "audio";
 
         res.setHeader("Content-Disposition", `attachment; filename="${title}.mp3"`);
         res.setHeader("Content-Type", "audio/mpeg");
@@ -210,7 +228,10 @@ app.get("/api/download/audio", async (req, res) => {
 
         stream.pipe(res);
     } catch (err) {
-        if (!res.headersSent) res.status(500).json({ success: false, message: err.message });
+        console.error("Download Audio Error:", err);
+        if (!res.headersSent) {
+            res.status(500).json({ success: false, message: err.message || "Download failed" });
+        }
     }
 });
 
@@ -236,7 +257,7 @@ app.get("/api/thumbnail", async (req, res) => {
     }
 });
 
-// Search
+// Search, Channel, Playlist, Trending (using yt-search)
 app.get("/api/search", async (req, res) => {
     const { q, limit = 10, type = "video" } = req.query;
     if (!q) return res.status(400).json({ success: false, message: "q parameter is required" });
@@ -278,18 +299,14 @@ app.get("/api/search", async (req, res) => {
     }
 });
 
-// Channel
-app.get("/api/channel", async (req, res) => {
+app.get("/api/channel", async (req, res) => { /* same as before */ 
+    // ... (you can keep or remove if not needed)
     const { q, limit = 10 } = req.query;
     if (!q) return res.status(400).json({ success: false, message: "q parameter is required" });
-
     try {
         const results = await yts({ query: q, category: "channel" });
         const channels = results.channels.slice(0, parseInt(limit)).map(c => ({
-            channelId: c.channelId,
-            name: c.name,
-            thumbnail: c.thumbnail,
-            subscribers: c.subscribers
+            channelId: c.channelId, name: c.name, thumbnail: c.thumbnail, subscribers: c.subscribers
         }));
         res.json({ success: true, query: q, count: channels.length, data: channels });
     } catch (err) {
@@ -297,19 +314,13 @@ app.get("/api/channel", async (req, res) => {
     }
 });
 
-// Playlist
-app.get("/api/playlist", async (req, res) => {
+app.get("/api/playlist", async (req, res) => { /* similar */ 
     const { q, limit = 10 } = req.query;
     if (!q) return res.status(400).json({ success: false, message: "q parameter is required" });
-
     try {
         const results = await yts({ query: q, category: "playlist" });
         const playlists = results.playlists.slice(0, parseInt(limit)).map(p => ({
-            playlistId: p.playlistId,
-            title: p.title,
-            videoCount: p.videoCount,
-            thumbnail: p.thumbnail,
-            url: p.url
+            playlistId: p.playlistId, title: p.title, videoCount: p.videoCount, thumbnail: p.thumbnail, url: p.url
         }));
         res.json({ success: true, query: q, count: playlists.length, data: playlists });
     } catch (err) {
@@ -317,7 +328,6 @@ app.get("/api/playlist", async (req, res) => {
     }
 });
 
-// Trending
 app.get("/api/trending", async (req, res) => {
     const { limit = 10 } = req.query;
     try {
@@ -337,9 +347,8 @@ app.get("/api/trending", async (req, res) => {
     }
 });
 
-// Cache Clear
 app.get("/api/cache/clear", (req, res) => {
-    res.json({ success: true, message: "Cache clear not needed with youtubei.js session cache" });
+    res.json({ success: true, message: "Not required with current setup" });
 });
 
 const PORT = process.env.PORT || 3000;
