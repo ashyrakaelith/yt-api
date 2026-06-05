@@ -10,10 +10,88 @@ app.use(cors());
 app.use(express.json());
 
 // ----------------------------
+// Anti-429 Agent Pool
+// Rotate User-Agents to avoid YouTube rate limits
+// ----------------------------
+const USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0"
+];
+
+let agentIndex = 0;
+
+function getAgent() {
+    const agent = USER_AGENTS[agentIndex % USER_AGENTS.length];
+    agentIndex++;
+    return agent;
+}
+
+// Build ytdl options with rotated agent + IPv6 workaround
+function ytdlOptions(extra = {}) {
+    return {
+        requestOptions: {
+            headers: {
+                "User-Agent":      getAgent(),
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection":      "keep-alive",
+                "Upgrade-Insecure-Requests": "1"
+            }
+        },
+        ...extra
+    };
+}
+
+// Retry wrapper — retries up to `retries` times on 429
+async function withRetry(fn, retries = 3, delayMs = 1500) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await fn();
+        } catch (err) {
+            const is429 =
+                err.message?.includes("429") ||
+                err.statusCode === 429 ||
+                err.message?.includes("Status code: 429");
+
+            if (is429 && i < retries - 1) {
+                console.warn(`⚠️  429 hit — retry ${i + 1}/${retries} in ${delayMs}ms`);
+                await new Promise(r => setTimeout(r, delayMs * (i + 1)));
+                continue;
+            }
+            throw err;
+        }
+    }
+}
+
+// Simple in-memory cache to avoid re-fetching same video
+const cache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function getCachedInfo(videoId) {
+    const cached = cache.get(videoId);
+    if (cached && Date.now() - cached.ts < CACHE_TTL) {
+        console.log(`📦 Cache hit: ${videoId}`);
+        return cached.info;
+    }
+    const info = await withRetry(() =>
+        ytdl.getInfo(
+            `https://www.youtube.com/watch?v=${videoId}`,
+            ytdlOptions()
+        )
+    );
+    cache.set(videoId, { info, ts: Date.now() });
+    return info;
+}
+
+// ----------------------------
 // Helpers
 // ----------------------------
 function extractVideoId(input) {
-    // Accept full URL or bare ID
     const patterns = [
         /(?:v=|youtu\.be\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/,
         /^([a-zA-Z0-9_-]{11})$/
@@ -50,17 +128,18 @@ app.get("/", (req, res) => {
     res.json({
         success: true,
         name: "YouTube API",
-        version: "1.0.0",
+        version: "2.0.0",
         endpoints: {
-            info:          "GET  /api/info?url=<videoUrl>",
-            search:        "GET  /api/search?q=<query>&limit=10",
-            formats:       "GET  /api/formats?url=<videoUrl>",
-            download_video:"GET  /api/download/video?url=<videoUrl>&quality=highest",
-            download_audio:"GET  /api/download/audio?url=<videoUrl>",
-            thumbnail:     "GET  /api/thumbnail?url=<videoUrl>&size=maxresdefault",
-            trending:      "GET  /api/trending?limit=10",
-            channel:       "GET  /api/channel?q=<channelName>&limit=10",
-            playlist:      "GET  /api/playlist?q=<playlistName>&limit=10"
+            info:           "GET  /api/info?url=<videoUrl>",
+            search:         "GET  /api/search?q=<query>&limit=10",
+            formats:        "GET  /api/formats?url=<videoUrl>",
+            download_video: "GET  /api/download/video?url=<videoUrl>&quality=highest",
+            download_audio: "GET  /api/download/audio?url=<videoUrl>",
+            thumbnail:      "GET  /api/thumbnail?url=<videoUrl>&size=maxresdefault",
+            trending:       "GET  /api/trending?limit=10",
+            channel:        "GET  /api/channel?q=<channelName>&limit=10",
+            playlist:       "GET  /api/playlist?q=<playlistName>&limit=10",
+            cache_clear:    "GET  /api/cache/clear"
         }
     });
 });
@@ -88,33 +167,26 @@ app.get("/api/info", async (req, res) => {
     }
 
     try {
-        const info = await ytdl.getInfo(
-            `https://www.youtube.com/watch?v=${videoId}`
-        );
-
+        const info    = await getCachedInfo(videoId);
         const details = info.videoDetails;
 
         const thumbnails = details.thumbnails || [];
-
-        const bestThumb =
-            thumbnails.reduce(
-                (best, t) =>
-                    !best || (t.width || 0) > (best.width || 0)
-                        ? t
-                        : best,
-                null
-            );
+        const bestThumb  = thumbnails.reduce(
+            (best, t) =>
+                !best || (t.width || 0) > (best.width || 0) ? t : best,
+            null
+        );
 
         const formats = info.formats.map(f => ({
-            itag:        f.itag,
-            quality:     f.qualityLabel || f.audioQuality || "unknown",
-            container:   f.container,
-            codecs:      f.codecs,
-            hasVideo:    f.hasVideo,
-            hasAudio:    f.hasAudio,
-            bitrate:     f.bitrate,
-            fps:         f.fps || null,
-            filesize:    f.contentLength
+            itag:     f.itag,
+            quality:  f.qualityLabel || f.audioQuality || "unknown",
+            container:f.container,
+            codecs:   f.codecs,
+            hasVideo: f.hasVideo,
+            hasAudio: f.hasAudio,
+            bitrate:  f.bitrate,
+            fps:      f.fps || null,
+            filesize: f.contentLength
                 ? `${(f.contentLength / 1_048_576).toFixed(2)} MB`
                 : "unknown"
         }));
@@ -122,36 +194,36 @@ app.get("/api/info", async (req, res) => {
         res.json({
             success: true,
             data: {
-                videoId:        details.videoId,
-                title:          details.title,
-                description:    details.description,
-                author:         details.author?.name,
-                channelId:      details.author?.id,
-                channelUrl:     details.author?.channel_url,
-                duration:       formatDuration(parseInt(details.lengthSeconds)),
-                durationSeconds:parseInt(details.lengthSeconds),
-                viewCount:      formatNumber(details.viewCount),
-                viewCountRaw:   parseInt(details.viewCount),
-                likeCount:      formatNumber(details.likes),
-                likeCountRaw:   details.likes,
-                uploadDate:     details.uploadDate,
-                publishDate:    details.publishDate,
-                isPrivate:      details.isPrivate,
-                isLive:         details.isLiveContent,
-                category:       details.category,
-                keywords:       details.keywords || [],
+                videoId:         details.videoId,
+                title:           details.title,
+                description:     details.description,
+                author:          details.author?.name,
+                channelId:       details.author?.id,
+                channelUrl:      details.author?.channel_url,
+                duration:        formatDuration(parseInt(details.lengthSeconds)),
+                durationSeconds: parseInt(details.lengthSeconds),
+                viewCount:       formatNumber(details.viewCount),
+                viewCountRaw:    parseInt(details.viewCount),
+                likeCount:       formatNumber(details.likes),
+                likeCountRaw:    details.likes,
+                uploadDate:      details.uploadDate,
+                publishDate:     details.publishDate,
+                isPrivate:       details.isPrivate,
+                isLive:          details.isLiveContent,
+                category:        details.category,
+                keywords:        details.keywords || [],
                 thumbnails: {
-                    default:    `https://img.youtube.com/vi/${videoId}/default.jpg`,
-                    medium:     `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
-                    high:       `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-                    standard:   `https://img.youtube.com/vi/${videoId}/sddefault.jpg`,
-                    maxres:     `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-                    best:       bestThumb?.url || null
+                    default:  `https://img.youtube.com/vi/${videoId}/default.jpg`,
+                    medium:   `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
+                    high:     `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+                    standard: `https://img.youtube.com/vi/${videoId}/sddefault.jpg`,
+                    maxres:   `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+                    best:     bestThumb?.url || null
                 },
-                url:            `https://www.youtube.com/watch?v=${videoId}`,
-                shortUrl:       `https://youtu.be/${videoId}`,
-                embedUrl:       `https://www.youtube.com/embed/${videoId}`,
-                formats:        formats
+                url:      `https://www.youtube.com/watch?v=${videoId}`,
+                shortUrl: `https://youtu.be/${videoId}`,
+                embedUrl: `https://www.youtube.com/embed/${videoId}`,
+                formats
             }
         });
 
@@ -185,9 +257,7 @@ app.get("/api/formats", async (req, res) => {
     }
 
     try {
-        const info = await ytdl.getInfo(
-            `https://www.youtube.com/watch?v=${videoId}`
-        );
+        const info = await getCachedInfo(videoId);
 
         const videoFormats = ytdl
             .filterFormats(info.formats, "videoandaudio")
@@ -254,9 +324,7 @@ app.get("/api/download/video", async (req, res) => {
     }
 
     try {
-        const info = await ytdl.getInfo(
-            `https://www.youtube.com/watch?v=${videoId}`
-        );
+        const info = await getCachedInfo(videoId);
 
         const title = info.videoDetails.title
             .replace(/[^\w\s-]/g, "")
@@ -269,13 +337,13 @@ app.get("/api/download/video", async (req, res) => {
         );
         res.setHeader("Content-Type", "video/mp4");
 
-        const options = itag
+        const filterOpts = itag
             ? { filter: f => f.itag === parseInt(itag) }
             : { quality };
 
         ytdl(
             `https://www.youtube.com/watch?v=${videoId}`,
-            options
+            ytdlOptions(filterOpts)
         ).pipe(res);
 
     } catch (err) {
@@ -310,9 +378,7 @@ app.get("/api/download/audio", async (req, res) => {
     }
 
     try {
-        const info = await ytdl.getInfo(
-            `https://www.youtube.com/watch?v=${videoId}`
-        );
+        const info = await getCachedInfo(videoId);
 
         const title = info.videoDetails.title
             .replace(/[^\w\s-]/g, "")
@@ -327,10 +393,7 @@ app.get("/api/download/audio", async (req, res) => {
 
         ytdl(
             `https://www.youtube.com/watch?v=${videoId}`,
-            {
-                quality,
-                filter: "audioonly"
-            }
+            ytdlOptions({ quality, filter: "audioonly" })
         ).pipe(res);
 
     } catch (err) {
@@ -349,7 +412,7 @@ app.get("/api/download/audio", async (req, res) => {
 app.get("/api/thumbnail", async (req, res) => {
     const {
         url,
-        size = "maxresdefault",
+        size     = "maxresdefault",
         redirect = "false"
     } = req.query;
 
@@ -369,36 +432,27 @@ app.get("/api/thumbnail", async (req, res) => {
     }
 
     const validSizes = [
-        "default",
-        "mqdefault",
-        "hqdefault",
-        "sddefault",
-        "maxresdefault"
+        "default", "mqdefault", "hqdefault",
+        "sddefault", "maxresdefault"
     ];
 
-    const safeSize = validSizes.includes(size)
-        ? size
-        : "maxresdefault";
+    const safeSize = validSizes.includes(size) ? size : "maxresdefault";
+    const thumbUrl = `https://img.youtube.com/vi/${videoId}/${safeSize}.jpg`;
 
-    const thumbUrl =
-        `https://img.youtube.com/vi/${videoId}/${safeSize}.jpg`;
-
-    // Redirect mode — browser will display image
     if (redirect === "true") {
         return res.redirect(thumbUrl);
     }
 
-    // Proxy mode — stream image through API
     try {
         const { data, headers } = await axios.get(thumbUrl, {
-            responseType: "stream"
+            responseType: "stream",
+            headers: { "User-Agent": getAgent() }
         });
 
         res.setHeader(
             "Content-Type",
             headers["content-type"] || "image/jpeg"
         );
-
         data.pipe(res);
 
     } catch (err) {
@@ -416,7 +470,7 @@ app.get("/api/search", async (req, res) => {
     const {
         q,
         limit = "10",
-        type = "video"
+        type  = "video"
     } = req.query;
 
     if (!q) {
@@ -428,25 +482,24 @@ app.get("/api/search", async (req, res) => {
 
     try {
         const results = await yts(q);
-
         let items = [];
 
         if (type === "video") {
             items = results.videos
                 .slice(0, parseInt(limit))
                 .map(v => ({
-                    videoId:   v.videoId,
-                    title:     v.title,
-                    author:    v.author?.name,
-                    channelId: v.author?.channelId,
-                    duration:  v.timestamp,
-                    views:     formatNumber(v.views),
-                    viewsRaw:  v.views,
-                    uploadDate:v.ago,
-                    description:v.description,
-                    thumbnail: v.thumbnail,
-                    url:       v.url,
-                    shortUrl:  `https://youtu.be/${v.videoId}`
+                    videoId:     v.videoId,
+                    title:       v.title,
+                    author:      v.author?.name,
+                    channelId:   v.author?.channelId,
+                    duration:    v.timestamp,
+                    views:       formatNumber(v.views),
+                    viewsRaw:    v.views,
+                    uploadDate:  v.ago,
+                    description: v.description,
+                    thumbnail:   v.thumbnail,
+                    url:         v.url,
+                    shortUrl:    `https://youtu.be/${v.videoId}`
                 }));
 
         } else if (type === "channel") {
@@ -503,8 +556,7 @@ app.get("/api/channel", async (req, res) => {
     }
 
     try {
-        const results = await yts({ query: q, category: "channel" });
-
+        const results  = await yts({ query: q, category: "channel" });
         const channels = results.channels
             .slice(0, parseInt(limit))
             .map(c => ({
@@ -545,8 +597,7 @@ app.get("/api/playlist", async (req, res) => {
     }
 
     try {
-        const results = await yts({ query: q, category: "playlist" });
-
+        const results   = await yts({ query: q, category: "playlist" });
         const playlists = results.playlists
             .slice(0, parseInt(limit))
             .map(p => ({
@@ -574,15 +625,14 @@ app.get("/api/playlist", async (req, res) => {
 });
 
 // ----------------------------
-// Trending (via yts)
+// Trending
 // ----------------------------
 app.get("/api/trending", async (req, res) => {
     const { limit = "10" } = req.query;
 
     try {
         const results = await yts("trending");
-
-        const videos = results.videos
+        const videos  = results.videos
             .slice(0, parseInt(limit))
             .map(v => ({
                 videoId:   v.videoId,
@@ -611,15 +661,24 @@ app.get("/api/trending", async (req, res) => {
 });
 
 // ----------------------------
+// Cache Clear (manual)
+// ----------------------------
+app.get("/api/cache/clear", (req, res) => {
+    const size = cache.size;
+    cache.clear();
+    agentIndex = 0;
+    res.json({
+        success: true,
+        message: `Cleared ${size} cached entries`
+    });
+});
+
+// ----------------------------
 // Start Server
 // ----------------------------
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-    console.log(
-        `🚀 YouTube API running on port ${PORT}`
-    );
-    console.log(
-        `📖 Docs: http://localhost:${PORT}/`
-    );
+    console.log(`🚀 YouTube API running on port ${PORT}`);
+    console.log(`📖 Docs: http://localhost:${PORT}/`);
 });
