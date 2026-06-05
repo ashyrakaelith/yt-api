@@ -1,25 +1,25 @@
 const express = require("express");
 const cors = require("cors");
 const { Innertube, UniversalCache } = require("youtubei.js");
-const yts = require("yt-search"); // Keep for search (still works well)
+const yts = require("yt-search");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Initialize Innertube (once)
+// Initialize YouTube client once
 let youtube;
-async function initYouTube() {
+async function getYouTube() {
     if (!youtube) {
         youtube = await Innertube.create({
-            cache: new UniversalCache(false), // or true if you want disk cache
-            // You can add cookies here later for age-restricted videos
+            cache: new UniversalCache(false),
+            // Add cookies here later for age-restricted content if needed
         });
     }
     return youtube;
 }
 
-// Reuse your helpers
+// --------------------- Helpers ---------------------
 function extractVideoId(input) {
     const patterns = [
         /(?:v=|youtu\.be\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/,
@@ -49,56 +49,64 @@ function formatNumber(n) {
     return String(num);
 }
 
-// ----------------------------
+// --------------------- Routes ---------------------
+
+app.get("/", (req, res) => {
+    res.json({
+        success: true,
+        name: "YouTube API",
+        version: "2.0.0",
+        message: "Powered by youtubei.js"
+    });
+});
+
 // Video Info
-// ----------------------------
 app.get("/api/info", async (req, res) => {
     const { url } = req.query;
-    if (!url) return res.status(400).json({ success: false, message: "url required" });
+    if (!url) return res.status(400).json({ success: false, message: "url parameter is required" });
 
     const videoId = extractVideoId(url);
-    if (!videoId) return res.status(400).json({ success: false, message: "Invalid YouTube URL/ID" });
+    if (!videoId) return res.status(400).json({ success: false, message: "Invalid YouTube URL or video ID" });
 
     try {
-        const yt = await initYouTube();
+        const yt = await getYouTube();
         const info = await yt.getInfo(videoId);
 
-        const details = info.primary_info;
-        const videoDetails = info.video_details;
+        const details = info.video_details;
+        const primary = info.primary_info;
 
-        const thumbnails = videoDetails.thumbnails || [];
+        const thumbnails = details.thumbnails || [];
         const bestThumb = thumbnails.reduce((best, t) => 
             !best || (t.width || 0) > (best.width || 0) ? t : best, null);
 
-        // Formats (streams)
-        const formats = info.streaming_data?.formats || [];
-        const adaptiveFormats = info.streaming_data?.adaptive_formats || [];
-
-        const allFormats = [...formats, ...adaptiveFormats].map(f => ({
+        const formats = [
+            ...(info.streaming_data?.formats || []),
+            ...(info.streaming_data?.adaptive_formats || [])
+        ].map(f => ({
             itag: f.itag,
             quality: f.quality_label || f.audio_quality,
-            container: f.mime_type?.split(';')[0].split('/')[1] || 'unknown',
+            container: f.mime_type?.split('/')[1]?.split(';')[0] || 'unknown',
             hasVideo: !!f.video_codec,
             hasAudio: !!f.audio_codec,
             bitrate: f.bitrate,
             fps: f.fps,
-            contentLength: f.content_length
+            filesize: f.content_length ? `${(f.content_length / 1_048_576).toFixed(2)} MB` : "unknown"
         }));
 
         res.json({
             success: true,
             data: {
-                videoId: videoDetails.id,
-                title: videoDetails.title.text || videoDetails.title,
-                description: details?.description?.text || "",
-                author: videoDetails.author.name,
-                channelId: videoDetails.channel_id,
-                duration: formatDuration(videoDetails.duration.seconds),
-                durationSeconds: videoDetails.duration.seconds,
-                viewCount: formatNumber(videoDetails.view_count),
-                viewCountRaw: videoDetails.view_count,
+                videoId: details.id,
+                title: details.title.text || details.title,
+                description: primary?.description?.text || "",
+                author: details.author?.name,
+                channelId: details.channel_id,
+                duration: formatDuration(details.duration.seconds),
+                durationSeconds: details.duration.seconds,
+                viewCount: formatNumber(details.view_count),
+                viewCountRaw: details.view_count,
                 likeCount: formatNumber(info.like_count || 0),
-                uploadDate: videoDetails.published.text,
+                uploadDate: details.published?.text || "",
                 thumbnails: {
                     default: `https://img.youtube.com/vi/${videoId}/default.jpg`,
                     medium: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
@@ -106,8 +114,7 @@ app.get("/api/info", async (req, res) => {
                     maxres: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
                     best: bestThumb?.url || null
                 },
-                formats: allFormats,
-                url: `https://www.youtube.com/watch?v=${videoId}`
+                formats
             }
         });
     } catch (err) {
@@ -116,14 +123,14 @@ app.get("/api/info", async (req, res) => {
     }
 });
 
-// Download Video (similar for audio)
+// Download Video
 app.get("/api/download/video", async (req, res) => {
-    const { url, quality = "highest" } = req.query;
+    const { url, quality = "best" } = req.query;
     const videoId = extractVideoId(url);
     if (!videoId) return res.status(400).json({ success: false, message: "Invalid URL" });
 
     try {
-        const yt = await initYouTube();
+        const yt = await getYouTube();
         const info = await yt.getInfo(videoId);
 
         const title = (info.video_details.title.text || info.video_details.title)
@@ -132,17 +139,76 @@ app.get("/api/download/video", async (req, res) => {
         res.setHeader("Content-Disposition", `attachment; filename="${title}.mp4"`);
         res.setHeader("Content-Type", "video/mp4");
 
-        // Choose best format
         const stream = await info.download({
             quality: quality === "highest" ? "best" : quality,
-            type: "video+audio" // or "video" / "audio"
+            type: "video+audio"
         });
 
         stream.pipe(res);
     } catch (err) {
-        if (!res.headersSent) res.status(500).json({ success: false, message: err.message });
+        if (!res.headersSent) {
+            res.status(500).json({ success: false, message: err.message });
+        }
     }
 });
 
-// Keep your other endpoints (search, trending, thumbnail, etc.) as they mostly still work with yt-search
-// You can also replace search with youtubei.js for better consistency if needed.
+// Download Audio
+app.get("/api/download/audio", async (req, res) => {
+    const { url } = req.query;
+    const videoId = extractVideoId(url);
+    if (!videoId) return res.status(400).json({ success: false, message: "Invalid URL" });
+
+    try {
+        const yt = await getYouTube();
+        const info = await yt.getInfo(videoId);
+
+        const title = (info.video_details.title.text || info.video_details.title)
+            .replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_");
+
+        res.setHeader("Content-Disposition", `attachment; filename="${title}.mp3"`);
+        res.setHeader("Content-Type", "audio/mpeg");
+
+        const stream = await info.download({
+            quality: "best",
+            type: "audio"
+        });
+
+        stream.pipe(res);
+    } catch (err) {
+        if (!res.headersSent) {
+            res.status(500).json({ success: false, message: err.message });
+        }
+    }
+});
+
+// Keep your other endpoints (search, formats, thumbnail, trending, etc.)
+// They mostly still work with yt-search
+
+app.get("/api/search", async (req, res) => {
+    const { q, limit = 10 } = req.query;
+    if (!q) return res.status(400).json({ success: false, message: "q parameter required" });
+
+    try {
+        const results = await yts(q);
+        const videos = results.videos.slice(0, parseInt(limit)).map(v => ({
+            videoId: v.videoId,
+            title: v.title,
+            author: v.author?.name,
+            duration: v.timestamp,
+            views: formatNumber(v.views),
+            thumbnail: v.thumbnail,
+            url: v.url
+        }));
+
+        res.json({ success: true, query: q, count: videos.length, data: videos });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// Add other endpoints as needed...
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 YouTube API v2.0 running on port ${PORT}`);
+});
