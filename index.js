@@ -299,19 +299,30 @@ app.get("/api/download/video", async (req, res) => {
 // Download Audio
 // ----------------------------
 app.get("/api/download/audio", async (req, res) => {
-    // ...
-    res.setHeader("Content-Disposition", `attachment; filename="${title}.mp3"`);
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.setHeader("Transfer-Encoding", "chunked"); // මෙය එකතු කර බලන්න
+    const { url } = req.query;
+    if (!url) return res.status(400).json({ success: false, message: "url is required" });
 
-    const stream = await client.download(videoId, {
-        type: "audio",
-        quality: "best",
-        format: "mp4"
-    });
+    const videoId = extractVideoId(url);
+    if (!videoId) return res.status(400).json({ success: false, message: "Invalid YouTube URL" });
 
-    await pipeYTStream(stream, res);
-});
+    try {
+        const client = await getYT();
+        const info = await getCachedInfo(videoId);
+        const title = (info.basic_info.title || "audio")
+            .replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_");
+
+        console.log(`🎵 Audio download: ${videoId}`);
+
+        res.setHeader("Content-Disposition", `attachment; filename="${title}.mp3"`);
+        res.setHeader("Content-Type", "audio/mpeg");
+
+        const stream = await client.download(videoId, {
+            type: "audio",
+            quality: "best",
+            format: "mp4"
+        });
+
+        await pipeYTStream(stream, res);
 
     } catch (err) {
         console.error("Audio download error:", err.message);
@@ -480,7 +491,7 @@ app.get("/api/cache/clear", (req, res) => {
 // ----------------------------
 // Start
 // ----------------------------
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, async () => {
     console.log(`🚀 YouTube API running on port ${PORT}`);
