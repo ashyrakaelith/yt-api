@@ -18,7 +18,6 @@ async function getYT() {
     if (!yt) {
         yt = await Innertube.create({
             cache: new UniversalCache(false),
-            generate_session_locally: true,
             retrieve_player: true,
             cookies: process.env.YT_COOKIES || ""
         });
