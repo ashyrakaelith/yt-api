@@ -1,7 +1,7 @@
-const express   = require("express");
-const axios     = require("axios");
-const cors      = require("cors");
-const yts       = require("yt-search");
+const express = require("express");
+const axios = require("axios");
+const cors = require("cors");
+const yts = require("yt-search");
 const { Innertube, UniversalCache } = require("youtubei.js");
 
 const app = express();
@@ -27,7 +27,7 @@ async function getYT() {
 // ----------------------------
 // In-memory info cache (5 min)
 // ----------------------------
-const cache     = new Map();
+const cache = new Map();
 const CACHE_TTL = 5 * 60 * 1000;
 
 async function getCachedInfo(videoId) {
@@ -37,7 +37,7 @@ async function getCachedInfo(videoId) {
         return hit.info;
     }
     const client = await getYT();
-    const info   = await client.getInfo(videoId);
+    const info = await client.getInfo(videoId);
     cache.set(videoId, { info, ts: Date.now() });
     return info;
 }
@@ -71,8 +71,8 @@ function formatNumber(n) {
     if (!n) return "0";
     const num = parseInt(n);
     if (num >= 1_000_000_000) return (num / 1_000_000_000).toFixed(1) + "B";
-    if (num >= 1_000_000)     return (num / 1_000_000).toFixed(1) + "M";
-    if (num >= 1_000)         return (num / 1_000).toFixed(1) + "K";
+    if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + "M";
+    if (num >= 1_000) return (num / 1_000).toFixed(1) + "K";
     return String(num);
 }
 
@@ -103,20 +103,20 @@ async function pipeYTStream(ytStream, res) {
 app.get("/", (req, res) => {
     res.json({
         success: true,
-        name:    "YouTube API",
+        name: "YouTube API",
         version: "4.0.0",
-        engine:  "youtubei.js (Innertube)",
+        engine: "youtubei.js (Innertube)",
         endpoints: {
-            info:           "GET /api/info?url=",
-            formats:        "GET /api/formats?url=",
+            info: "GET /api/info?url=",
+            formats: "GET /api/formats?url=",
             download_video: "GET /api/download/video?url=&quality=360p",
             download_audio: "GET /api/download/audio?url=",
-            thumbnail:      "GET /api/thumbnail?url=&size=maxresdefault",
-            search:         "GET /api/search?q=&limit=10&type=video",
-            trending:       "GET /api/trending?limit=10",
-            channel:        "GET /api/channel?q=&limit=10",
-            playlist:       "GET /api/playlist?q=&limit=10",
-            cache_clear:    "GET /api/cache/clear"
+            thumbnail: "GET /api/thumbnail?url=&size=maxresdefault",
+            search: "GET /api/search?q=&limit=10&type=video",
+            trending: "GET /api/trending?limit=10",
+            channel: "GET /api/channel?q=&limit=10",
+            playlist: "GET /api/playlist?q=&limit=10",
+            cache_clear: "GET /api/cache/clear"
         }
     });
 });
@@ -132,23 +132,23 @@ app.get("/api/info", async (req, res) => {
     if (!videoId) return res.status(400).json({ success: false, message: "Invalid YouTube URL" });
 
     try {
-        const info    = await getCachedInfo(videoId);
+        const info = await getCachedInfo(videoId);
         const details = info.basic_info;
 
         // Collect formats
         const sd = info.streaming_data;
         const allRaw = [...(sd?.formats || []), ...(sd?.adaptive_formats || [])];
         const formats = allRaw.map(f => ({
-            itag:      f.itag,
-            quality:   f.quality_label || f.audio_quality || "unknown",
-            mimeType:  f.mime_type,
-            hasVideo:  !!f.width,
-            hasAudio:  !!f.audio_quality,
-            bitrate:   f.bitrate,
-            fps:       f.fps    || null,
-            width:     f.width  || null,
-            height:    f.height || null,
-            filesize:  f.content_length
+            itag: f.itag,
+            quality: f.quality_label || f.audio_quality || "unknown",
+            mimeType: f.mime_type,
+            hasVideo: !!f.width,
+            hasAudio: !!f.audio_quality,
+            bitrate: f.bitrate,
+            fps: f.fps || null,
+            width: f.width || null,
+            height: f.height || null,
+            filesize: f.content_length
                 ? `${(parseInt(f.content_length) / 1_048_576).toFixed(2)} MB`
                 : "unknown"
         }));
@@ -156,29 +156,29 @@ app.get("/api/info", async (req, res) => {
         res.json({
             success: true,
             data: {
-                videoId:         details.id,
-                title:           details.title,
-                description:     details.short_description || "",
-                author:          details.author,
-                channelId:       details.channel_id,
-                duration:        formatDuration(details.duration),
+                videoId: details.id,
+                title: details.title,
+                description: details.short_description || "",
+                author: details.author,
+                channelId: details.channel_id,
+                duration: formatDuration(details.duration),
                 durationSeconds: details.duration,
-                viewCount:       formatNumber(details.view_count),
-                viewCountRaw:    details.view_count,
-                likeCount:       formatNumber(details.like_count),
-                likeCountRaw:    details.like_count,
-                isPrivate:       details.is_private,
-                isLive:          details.is_live,
-                keywords:        details.keywords || [],
+                viewCount: formatNumber(details.view_count),
+                viewCountRaw: details.view_count,
+                likeCount: formatNumber(details.like_count),
+                likeCountRaw: details.like_count,
+                isPrivate: details.is_private,
+                isLive: details.is_live,
+                keywords: details.keywords || [],
                 thumbnails: {
-                    default:  `https://img.youtube.com/vi/${videoId}/default.jpg`,
-                    medium:   `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
-                    high:     `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+                    default: `https://img.youtube.com/vi/${videoId}/default.jpg`,
+                    medium: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
+                    high: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
                     standard: `https://img.youtube.com/vi/${videoId}/sddefault.jpg`,
-                    maxres:   `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-                    best:     bestThumbnail(details.thumbnails)
+                    maxres: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+                    best: bestThumbnail(details.thumbnails)
                 },
-                url:      `https://www.youtube.com/watch?v=${videoId}`,
+                url: `https://www.youtube.com/watch?v=${videoId}`,
                 shortUrl: `https://youtu.be/${videoId}`,
                 embedUrl: `https://www.youtube.com/embed/${videoId}`,
                 formats
@@ -202,33 +202,33 @@ app.get("/api/formats", async (req, res) => {
 
     try {
         const info = await getCachedInfo(videoId);
-        const sd   = info.streaming_data;
+        const sd = info.streaming_data;
 
         const toFormat = f => ({
-            itag:     f.itag,
-            quality:  f.quality_label || f.audio_quality || "unknown",
+            itag: f.itag,
+            quality: f.quality_label || f.audio_quality || "unknown",
             mimeType: f.mime_type,
             hasVideo: !!f.width,
             hasAudio: !!f.audio_quality,
-            bitrate:  f.bitrate,
-            fps:      f.fps    || null,
-            width:    f.width  || null,
-            height:   f.height || null,
+            bitrate: f.bitrate,
+            fps: f.fps || null,
+            width: f.width || null,
+            height: f.height || null,
             filesize: f.content_length
                 ? `${(parseInt(f.content_length) / 1_048_576).toFixed(2)} MB`
                 : "unknown"
         });
 
-        const muxed  = (sd?.formats          || []).map(toFormat);
+        const muxed = (sd?.formats || []).map(toFormat);
         const adaptive = (sd?.adaptive_formats || []).map(toFormat);
 
         res.json({
             success: true,
             videoId,
-            title:        info.basic_info.title,
+            title: info.basic_info.title,
             muxedFormats: muxed,          // video+audio combined — use these for /download/video
-            videoFormats: adaptive.filter(f =>  f.hasVideo && !f.hasAudio),
-            audioFormats: adaptive.filter(f => !f.hasVideo &&  f.hasAudio)
+            videoFormats: adaptive.filter(f => f.hasVideo && !f.hasAudio),
+            audioFormats: adaptive.filter(f => !f.hasVideo && f.hasAudio)
         });
 
     } catch (err) {
@@ -238,8 +238,6 @@ app.get("/api/formats", async (req, res) => {
 
 // ----------------------------
 // Download Video
-// Uses Innertube.download() which handles deciphering automatically
-// quality param: "best", "144p", "240p", "360p", "480p", "720p", "1080p"
 // ----------------------------
 app.get("/api/download/video", async (req, res) => {
     const { url, quality = "360p" } = req.query;
@@ -250,18 +248,18 @@ app.get("/api/download/video", async (req, res) => {
 
     try {
         const client = await getYT();
-        const info   = await getCachedInfo(videoId);
-        const title  = (info.basic_info.title || "video")
+        const info = await getCachedInfo(videoId);
+        const title = (info.basic_info.title || "video")
             .replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_");
 
         // Choose the best muxed format at or below requested quality
-        const sd          = info.streaming_data;
-        const muxed       = sd?.formats || [];
+        const sd = info.streaming_data;
+        const muxed = sd?.formats || [];
 
         // quality label priority list
         const qualityOrder = ["1080p", "720p", "480p", "360p", "240p", "144p"];
-        const targetIndex  = qualityOrder.indexOf(quality);
-        const candidates   = targetIndex >= 0
+        const targetIndex = qualityOrder.indexOf(quality);
+        const candidates = targetIndex >= 0
             ? qualityOrder.slice(targetIndex)  // at or below requested quality
             : qualityOrder;
 
@@ -287,11 +285,11 @@ app.get("/api/download/video", async (req, res) => {
         if (chosen.content_length)
             res.setHeader("Content-Length", chosen.content_length);
 
-        // Use Innertube's download — it deciphers n-param & sig automatically
+        // Use Innertube's download
         const stream = await client.download(videoId, {
-            type:    "video+audio",
+            type: "video+audio",
             quality: chosen.quality_label || "360p",
-            format:  "mp4"
+            format: "mp4"
         });
 
         await pipeYTStream(stream, res);
@@ -315,8 +313,8 @@ app.get("/api/download/audio", async (req, res) => {
 
     try {
         const client = await getYT();
-        const info   = await getCachedInfo(videoId);
-        const title  = (info.basic_info.title || "audio")
+        const info = await getCachedInfo(videoId);
+        const title = (info.basic_info.title || "audio")
             .replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_");
 
         console.log(`🎵 Audio download: ${videoId}`);
@@ -326,9 +324,9 @@ app.get("/api/download/audio", async (req, res) => {
 
         // Innertube handles all deciphering internally
         const stream = await client.download(videoId, {
-            type:    "audio",
+            type: "audio",
             quality: "best",
-            format:  "mp4"   // AAC audio in mp4 container — best quality
+            format: "mp4"   // AAC audio in mp4 container — best quality
         });
 
         await pipeYTStream(stream, res);
@@ -351,8 +349,8 @@ app.get("/api/thumbnail", async (req, res) => {
     if (!videoId) return res.status(400).json({ success: false, message: "Invalid YouTube URL" });
 
     const validSizes = ["default", "mqdefault", "hqdefault", "sddefault", "maxresdefault"];
-    const safeSize   = validSizes.includes(size) ? size : "maxresdefault";
-    const thumbUrl   = `https://img.youtube.com/vi/${videoId}/${safeSize}.jpg`;
+    const safeSize = validSizes.includes(size) ? size : "maxresdefault";
+    const thumbUrl = `https://img.youtube.com/vi/${videoId}/${safeSize}.jpg`;
 
     if (redirect === "true") return res.redirect(thumbUrl);
 
@@ -378,35 +376,35 @@ app.get("/api/search", async (req, res) => {
 
         if (type === "video") {
             items = results.videos.slice(0, parseInt(limit)).map(v => ({
-                videoId:     v.videoId,
-                title:       v.title,
-                author:      v.author?.name,
-                channelId:   v.author?.channelId,
-                duration:    v.timestamp,
-                views:       formatNumber(v.views),
-                viewsRaw:    v.views,
-                uploadDate:  v.ago,
+                videoId: v.videoId,
+                title: v.title,
+                author: v.author?.name,
+                channelId: v.author?.channelId,
+                duration: v.timestamp,
+                views: formatNumber(v.views),
+                viewsRaw: v.views,
+                uploadDate: v.ago,
                 description: v.description,
-                thumbnail:   v.thumbnail,
-                url:         v.url,
-                shortUrl:    `https://youtu.be/${v.videoId}`
+                thumbnail: v.thumbnail,
+                url: v.url,
+                shortUrl: `https://youtu.be/${v.videoId}`
             }));
         } else if (type === "channel") {
             items = results.channels.slice(0, parseInt(limit)).map(c => ({
-                channelId:   c.channelId,
-                name:        c.name,
-                url:         c.url,
-                thumbnail:   c.thumbnail,
+                channelId: c.channelId,
+                name: c.name,
+                url: c.url,
+                thumbnail: c.thumbnail,
                 subscribers: c.subscribers
             }));
         } else if (type === "playlist") {
             items = results.playlists.slice(0, parseInt(limit)).map(p => ({
                 playlistId: p.playlistId,
-                title:      p.title,
+                title: p.title,
                 videoCount: p.videoCount,
-                author:     p.author?.name,
-                thumbnail:  p.thumbnail,
-                url:        p.url
+                author: p.author?.name,
+                thumbnail: p.thumbnail,
+                url: p.url
             }));
         }
 
@@ -425,14 +423,14 @@ app.get("/api/channel", async (req, res) => {
     if (!q) return res.status(400).json({ success: false, message: "q is required" });
 
     try {
-        const results  = await yts({ query: q, category: "channel" });
+        const results = await yts({ query: q, category: "channel" });
         const channels = results.channels.slice(0, parseInt(limit)).map(c => ({
-            channelId:   c.channelId,
-            name:        c.name,
-            url:         c.url,
-            thumbnail:   c.thumbnail,
+            channelId: c.channelId,
+            name: c.name,
+            url: c.url,
+            thumbnail: c.thumbnail,
             subscribers: c.subscribers,
-            verified:    c.verified || false
+            verified: c.verified || false
         }));
         res.json({ success: true, query: q, count: channels.length, data: channels });
     } catch (err) {
@@ -448,14 +446,14 @@ app.get("/api/playlist", async (req, res) => {
     if (!q) return res.status(400).json({ success: false, message: "q is required" });
 
     try {
-        const results   = await yts({ query: q, category: "playlist" });
+        const results = await yts({ query: q, category: "playlist" });
         const playlists = results.playlists.slice(0, parseInt(limit)).map(p => ({
             playlistId: p.playlistId,
-            title:      p.title,
+            title: p.title,
             videoCount: p.videoCount,
-            author:     p.author?.name,
-            thumbnail:  p.thumbnail,
-            url:        p.url
+            author: p.author?.name,
+            thumbnail: p.thumbnail,
+            url: p.url
         }));
         res.json({ success: true, query: q, count: playlists.length, data: playlists });
     } catch (err) {
@@ -470,16 +468,16 @@ app.get("/api/trending", async (req, res) => {
     const { limit = "10" } = req.query;
     try {
         const results = await yts("trending");
-        const videos  = results.videos.slice(0, parseInt(limit)).map(v => ({
-            videoId:    v.videoId,
-            title:      v.title,
-            author:     v.author?.name,
-            duration:   v.timestamp,
-            views:      formatNumber(v.views),
-            viewsRaw:   v.views,
+        const videos = results.videos.slice(0, parseInt(limit)).map(v => ({
+            videoId: v.videoId,
+            title: v.title,
+            author: v.author?.name,
+            duration: v.timestamp,
+            views: formatNumber(v.views),
+            viewsRaw: v.views,
             uploadDate: v.ago,
-            thumbnail:  v.thumbnail,
-            url:        v.url
+            thumbnail: v.thumbnail,
+            url: v.url
         }));
         res.json({ success: true, count: videos.length, data: videos });
     } catch (err) {
