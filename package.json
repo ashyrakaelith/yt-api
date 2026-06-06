@@ -2,6 +2,7 @@
   "name": "youtube-api",
   "version": "3.0.0",
   "description": "YouTube API using youtubei.js (Innertube) — no ytdl-core",
+  "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

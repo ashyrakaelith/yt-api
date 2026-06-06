@@ -1,8 +1,8 @@
-const express = require("express");
-const axios = require("axios");
-const cors = require("cors");
-const yts = require("yt-search");
-const { Innertube, UniversalCache } = require("youtubei.js");
+import express from "express";
+import axios from "axios";
+import cors from "cors";
+import yts from "yt-search";
+import { Innertube, UniversalCache } from "youtubei.js";
 
 const app = express();
 app.use(cors());
@@ -19,8 +19,7 @@ async function getYT() {
             cache: new UniversalCache(false),
             generate_session_locally: true,
             retrieve_player: true,
-            // Fixed: Cookie section updated
-            cookies: process.env.YT_COOKIES || "" 
+            cookies: process.env.YT_COOKIES || ""
         });
     }
     return yt;
