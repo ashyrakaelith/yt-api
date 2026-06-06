@@ -19,6 +19,7 @@ async function getYT() {
             cache: new UniversalCache(false),
             generate_session_locally: true,
             retrieve_player: true,
+            client_type: 'IOS',
             // Fixed: Cookie section updated
             cookies: process.env.YT_COOKIES || "" 
         });
